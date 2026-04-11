@@ -35,35 +35,35 @@ def weights_init(m):
 
 class REC_Processor(Processor):
     """
-        Processor for Skeleton-based Action Recgnition
+        Processor for Skeleton-based Action Recognition
     """
 
     def load_model(self):
         self.model = self.io.load_model(self.arg.model,
                                         **(self.arg.model_args))
         self.model.apply(weights_init)
-        # 默认 loss（如需类别权重，会在 load_data() 里根据训练集标签自动重建）
+        # Default loss (rebuilt in load_data if class weights are used)
         self.loss = nn.CrossEntropyLoss()
 
     def load_data(self):
         super().load_data()
 
-        # 自动使用类别权重（处理类别不平衡）
+        # Automatically use class weights to handle class imbalance
         if getattr(self.arg, 'use_class_weight', False) and self.arg.phase == 'train':
             if 'train' not in self.data_loader:
                 return
 
             dataset = self.data_loader['train'].dataset
             if not hasattr(dataset, 'label'):
-                self.io.print_log('⚠️  use_class_weight=true 但 dataset 没有 label 属性，跳过类别权重。')
+                self.io.print_log('⚠️ use_class_weight=true but dataset has no label attribute, skipping class weights.')
                 return
 
             labels = np.array(dataset.label, dtype=np.int64)
             if labels.size == 0:
-                self.io.print_log('⚠️  训练集 labels 为空，跳过类别权重。')
+                self.io.print_log('⚠️ Training set labels are empty, skipping class weights.')
                 return
 
-            # 优先使用配置里的 num_class
+            # Prefer num_class from config
             num_class = None
             try:
                 num_class = int(self.arg.model_args.get('num_class'))
@@ -74,13 +74,13 @@ class REC_Processor(Processor):
             counts = Counter(labels.tolist())
             total = int(labels.shape[0])
 
-            # class-balanced 权重: w_c = total / (num_class * count_c)
+            # Class-balanced weights: w_c = total / (num_class * count_c)
             weights = np.zeros((num_class,), dtype=np.float32)
             for c in range(num_class):
                 cnt = counts.get(c, 0)
                 weights[c] = (total / (num_class * cnt)) if cnt > 0 else 0.0
 
-            # 归一化到均值为1（避免整体 loss 尺度漂移）
+            # Normalize to mean 1 (to avoid overall loss scale drift)
             nonzero = weights > 0
             if nonzero.any():
                 weights[nonzero] = weights[nonzero] / weights[nonzero].mean()
@@ -88,13 +88,13 @@ class REC_Processor(Processor):
             weight_tensor = torch.tensor(weights, dtype=torch.float32, device=self.dev)
             self.loss = nn.CrossEntropyLoss(weight=weight_tensor)
 
-            self.io.print_log('启用 CrossEntropyLoss 类别权重 (use_class_weight=true)')
-            self.io.print_log(f'  训练集样本数: {total}')
-            self.io.print_log(f'  训练集类别计数: {dict(sorted(counts.items()))}')
-            self.io.print_log(f'  类别权重(归一化): {np.round(weights, 4).tolist()}')
+            self.io.print_log('Enabled CrossEntropyLoss class weights (use_class_weight=true)')
+            self.io.print_log(f'  Training samples: {total}')
+            self.io.print_log(f'  Training class counts: {dict(sorted(counts.items()))}')
+            self.io.print_log(f'  Class weights (normalized): {np.round(weights, 4).tolist()}')
         
     def load_optimizer(self):
-        # 支持AdamW优化器
+        # Support AdamW optimizer
         if self.arg.optimizer == 'SGD':
             self.optimizer = optim.SGD(
                 self.model.parameters(),
@@ -108,12 +108,12 @@ class REC_Processor(Processor):
                 lr=self.arg.base_lr,
                 weight_decay=self.arg.weight_decay)
         elif self.arg.optimizer == 'AdamW':
-            # 支持自定义优化器参数
+            # Support custom optimizer arguments
             optimizer_kwargs = {
                 'lr': self.arg.base_lr,
                 'weight_decay': self.arg.weight_decay
             }
-            # 添加optimizer_args中的参数
+            # Add parameters from optimizer_args
             if hasattr(self.arg, 'optimizer_args') and self.arg.optimizer_args:
                 optimizer_kwargs.update(self.arg.optimizer_args)
 
@@ -123,7 +123,7 @@ class REC_Processor(Processor):
         else:
             raise ValueError("Unsupported optimizer: {}".format(self.arg.optimizer))
             
-        # 支持多种学习率调度器
+        # Support multiple learning rate schedulers
         if self.arg.scheduler == 'CosineAnnealingLR':
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
@@ -135,8 +135,8 @@ class REC_Processor(Processor):
                 step_size=self.arg.step_size, 
                 gamma=self.arg.gamma)
         elif self.arg.scheduler == 'ReduceLROnPlateau':
-            # ReduceLROnPlateau 需要从验证损失来调整
-            # 注意：PyTorch 的 ReduceLROnPlateau 不支持 verbose 参数
+            # ReduceLROnPlateau requires validation loss for adjustment
+            # Note: PyTorch's ReduceLROnPlateau does not support the verbose parameter
             scheduler_kwargs = {
                 'mode': getattr(self.arg, 'scheduler_mode', 'min'),
                 'factor': getattr(self.arg, 'scheduler_factor', 0.3),
@@ -148,26 +148,26 @@ class REC_Processor(Processor):
                 self.optimizer,
                 **scheduler_kwargs
             )
-            # 如果需要打印信息，手动记录
+            # Manually log if verbose info is needed
             if getattr(self.arg, 'scheduler_verbose', True):
                 self.io.print_log('ReduceLROnPlateau scheduler initialized: {}'.format(scheduler_kwargs))
             self.use_plateau_scheduler = True
         else:
             self.use_plateau_scheduler = False
-        # 如果没有指定调度器，则使用默认的调整学习率方法
+        # If no scheduler is specified, use the default learning rate adjustment method
 
     def adjust_lr(self, metric=None):
-        # ReduceLROnPlateau 需要验证指标（如 val_loss）
+        # ReduceLROnPlateau requires a validation metric (e.g., val_loss)
         if hasattr(self, 'use_plateau_scheduler') and self.use_plateau_scheduler:
             if metric is not None:
                 self.scheduler.step(metric)
-            # ReduceLROnPlateau 没有 get_last_lr()，需要从 optimizer 获取
+            # ReduceLROnPlateau does not have get_last_lr(), fetch from optimizer
             self.lr = self.optimizer.param_groups[0]['lr']
-        # 如果使用了其他调度器，则调用调度器的step方法
+        # If other schedulers are used, call their step method
         elif hasattr(self, 'scheduler'):
             self.scheduler.step()
             self.lr = self.scheduler.get_last_lr()[0]
-        # 否则使用原有的学习率调整方法
+        # Otherwise, use the original learning rate adjustment method
         elif self.arg.optimizer == 'SGD' and self.arg.step:
             lr = self.arg.base_lr * (
                 0.1**np.sum(self.meta_info['epoch']>= np.array(self.arg.step)))
@@ -180,12 +180,12 @@ class REC_Processor(Processor):
     def show_topk(self, k):
         if self.result is None:
             return
-        # result 转为 numpy
+        # Convert result to numpy
         result = np.array(self.result)
         rank = result.argsort()
         if self.label is None:
             return
-        # label 转为 numpy
+        # Convert label to numpy
         label = np.array(self.label)
         hit_top_k = [l in rank[i, -k:] for i, l in enumerate(label)]
         accuracy = sum(hit_top_k) * 1.0 / len(hit_top_k)
@@ -198,14 +198,14 @@ class REC_Processor(Processor):
         """
         if self.result is None or self.label is None:
             return
-        # result 和 label 转为 numpy
+        # Convert result and label to numpy
         result = np.array(self.result)
         label = np.array(self.label)
         
-        # 获取预测值（最高概率的类别）
+        # Get predicted values (class with the highest probability)
         pred = result.argmax(axis=1)
         
-        # 计算在误差范围内的预测
+        # Calculate predictions within the error margin
         hit_acceptable = np.abs(pred - label) <= margin
         accuracy = hit_acceptable.sum() * 1.0 / len(hit_acceptable)
         
@@ -228,7 +228,7 @@ class REC_Processor(Processor):
         loss_value = []
 
         for batch_data in loader:
-            # 支持截肢标签（如果数据加载器返回3个值）
+            # Support amputee labels (if data loader returns 3 values)
             if len(batch_data) == 3:
                 data, label, amputee_type = batch_data
             else:
@@ -240,13 +240,13 @@ class REC_Processor(Processor):
             label = label.long().to(self.dev)
 
             # forward
-            # 如果模型支持截肢标签，传递它
+            # Pass amputee label if the model supports it
             if amputee_type is not None:
-                # 检查模型是否支持amputee_type参数
+                # Check if the model supports the amputee_type parameter
                 import inspect
                 model_forward_sig = inspect.signature(self.model.forward)
                 if 'amputee_type' in model_forward_sig.parameters:
-                    # 直接传递列表/元组，让模型内部处理batch级别
+                    # Pass list/tuple directly, let the model handle batch level internally
                     output = self.model(data, amputee_type=amputee_type)
                 else:
                     output = self.model(data)
@@ -279,7 +279,7 @@ class REC_Processor(Processor):
         label_frag = []
 
         for batch_data in loader:
-            # 支持截肢标签（如果数据加载器返回3个值）
+            # Support amputee labels (if data loader returns 3 values)
             if len(batch_data) == 3:
                 data, label, amputee_type = batch_data
             else:
@@ -292,13 +292,13 @@ class REC_Processor(Processor):
 
             # inference
             with torch.no_grad():
-                # 如果模型支持截肢标签，传递它
+                # Pass amputee label if the model supports it
                 if amputee_type is not None:
-                    # 检查模型是否支持amputee_type参数
+                    # Check if the model supports the amputee_type parameter
                     import inspect
                     model_forward_sig = inspect.signature(self.model.forward)
                     if 'amputee_type' in model_forward_sig.parameters:
-                        # 直接传递列表/元组，让模型内部处理batch级别
+                        # Pass list/tuple directly, let the model handle batch level internally
                         output = self.model(data, amputee_type=amputee_type)
                     else:
                         output = self.model(data)
@@ -329,7 +329,7 @@ class REC_Processor(Processor):
             self.last_val_loss = self.epoch_info['mean_loss']
 
     def save_checkpoint(self, epoch):
-        """只保存模型权重（不保存 optimizer / epoch info），用于减少磁盘占用"""
+        """Save only model weights (excluding optimizer / epoch info) to reduce disk usage"""
         # Save model
         model_filename = 'epoch{}_model.pt'.format(epoch + 1)
         self.io.save_model(self.model, model_filename)
