@@ -64,7 +64,7 @@ class Model(nn.Module):
             self.edge_importance = [1] * len(self.st_gcn_networks)
 
         # fcn for prediction
-        self.fcn = nn.Conv2d(256, num_class, kernel_size=1)   #全卷积层，负责将学到的时空特征转换为具体的动作分类结果
+        self.fcn = nn.Conv2d(256, num_class, kernel_size=1)   
 
     def forward(self, x):
 
@@ -76,12 +76,6 @@ class Model(nn.Module):
         x = x.view(N, M, V, C, T)
         x = x.permute(0, 1, 3, 4, 2).contiguous()
         x = x.view(N * M, C, T, V)
-#输入数据：(N, C, T, V, M)
-#维度重排：(N, M, V, C, T)
-##批归一化：(N * M, V * C, T)
-#形状恢复：(N, M, V, C, T)
-#维度重排：(N, M, C, T, V)
-#最终形状：(N * M, C, T, V)
         # forward
         for gcn, importance in zip(self.st_gcn_networks, self.edge_importance):
             x, _ = gcn(x, self.A * importance)
