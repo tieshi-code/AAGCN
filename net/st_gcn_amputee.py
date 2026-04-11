@@ -6,70 +6,42 @@ from torch.autograd import Variable
 from net.utils.tgcn import ConvTemporalGraphical
 from net.utils.graph import Graph
 
-# AlphaPose COCO 17点关节索引
-# 右腿关节：RHip=12, RKnee=14, RAnkle=16
-# 左腿关节：LHip=11, LKnee=13, LAnkle=15
 RIGHT_LEG_JOINTS = [12, 14, 16]
 LEFT_LEG_JOINTS = [11, 13, 15]
 
 
 class AmputeeLegAttention(nn.Module):
-    """截肢腿专用注意力模块（SE-like）"""
     
     def __init__(self, channels, amputee_joints, reduction=4):
-        """
-        Args:
-            channels: 特征通道数
-            amputee_joints: 截肢腿关节索引列表（如 [12,14,16] 表示右腿）
-            reduction: 压缩比例
-        """
         super(AmputeeLegAttention, self).__init__()
         self.amputee_joints = amputee_joints
-        self.num_joints = 17  # AlphaPose 固定17个关节
+        self.num_joints = 17 
         
-        # SE-like 注意力：全局池化 -> FC -> ReLU -> FC -> Sigmoid
         self.global_pool = nn.AdaptiveAvgPool2d(1)  # (N, C, T, V) -> (N, C, 1, 1)
         self.fc1 = nn.Linear(channels, channels // reduction)
         self.relu = nn.ReLU(inplace=True)
         self.fc2 = nn.Linear(channels // reduction, channels)
         self.sigmoid = nn.Sigmoid()
         
-        # 关节级别的注意力权重（可学习）
         self.joint_weights = nn.Parameter(torch.ones(self.num_joints))
         
     def forward(self, x, amputee_type='none', attention_weight=2.0):
-        """
-        Args:
-            x: (N, C, T, V) 特征图
-            amputee_type: 'right_leg', 'left_leg', 'both_legs', 'none' 或 list/tensor
-            attention_weight: 截肢腿关节的注意力权重倍数（默认2.0）
-        Returns:
-            x_att: 加权后的特征图
-            attention_map: 注意力权重图 (N, 1, 1, V)
-        """
         N, C, T, V = x.size()
         
-        # 1. 通道注意力（SE-like）
-        # 全局池化
         y = self.global_pool(x)  # (N, C, 1, 1)
         y = y.view(N, C)  # (N, C)
         
-        # FC -> ReLU -> FC -> Sigmoid
         y = self.fc1(y)
         y = self.relu(y)
         y = self.fc2(y)
         y = self.sigmoid(y)  # (N, C)
         y = y.view(N, C, 1, 1)  # (N, C, 1, 1)
         
-        # 应用通道注意力
         x_channel_att = x * y  # (N, C, T, V)
         
-        # 2. 关节级别注意力（对截肢腿关节加权）
         joint_mask = torch.ones(N, 1, 1, V, device=x.device)
         
-        # 处理batch级别的截肢类型
         if isinstance(amputee_type, (list, tuple)):
-            # 列表：每个样本一个类型
             for i, amp_type in enumerate(amputee_type):
                 if i >= N:
                     break
@@ -86,11 +58,8 @@ class AmputeeLegAttention(nn.Module):
                         if j < V:
                             joint_mask[i, :, :, j] = attention_weight
         elif isinstance(amputee_type, torch.Tensor):
-            # Tensor: 每个样本一个类型（需要转换为字符串）
-            # 简化处理：暂时不支持tensor，使用none
             pass
         else:
-            # 字符串：所有样本使用相同类型
             if amputee_type == 'right_leg':
                 for j in RIGHT_LEG_JOINTS:
                     if j < V:
@@ -104,11 +73,9 @@ class AmputeeLegAttention(nn.Module):
                     if j < V:
                         joint_mask[:, :, :, j] = attention_weight
         
-        # 应用可学习的关节权重
         joint_weights = self.joint_weights.unsqueeze(0).unsqueeze(0).unsqueeze(0)  # (1, 1, 1, V)
         joint_mask = joint_mask * joint_weights
         
-        # 归一化（保持能量，避免梯度爆炸）
         mask_mean = joint_mask.mean()
         if mask_mean > 0:
             joint_mask = joint_mask / mask_mean
@@ -119,7 +86,6 @@ class AmputeeLegAttention(nn.Module):
 
 
 class st_gcn_amputee(nn.Module):
-    """带截肢腿注意力的 ST-GCN 块"""
     
     def __init__(self,
                  in_channels,
@@ -155,7 +121,6 @@ class st_gcn_amputee(nn.Module):
             nn.Dropout(dropout, inplace=True),
         )
         
-        # 截肢腿注意力模块
         if self.use_amputee_attention:
             self.amputee_attention = AmputeeLegAttention(out_channels, [])
         
@@ -181,7 +146,6 @@ class st_gcn_amputee(nn.Module):
         x, A = self.gcn(x, A)
         x = self.tcn(x)
         
-        # 应用截肢腿注意力
         if self.use_amputee_attention:
             x, _ = self.amputee_attention(x, amputee_type=amputee_type, attention_weight=attention_weight)
         
@@ -190,7 +154,6 @@ class st_gcn_amputee(nn.Module):
 
 
 class Model_Amputee(nn.Module):
-    """改进的 ST-GCN 模型，支持截肢腿注意力"""
     
     def __init__(self, in_channels, num_class, graph_args,
                  edge_importance_weighting, use_amputee_attention=True, **kwargs):
@@ -203,11 +166,10 @@ class Model_Amputee(nn.Module):
         
         self.use_amputee_attention = use_amputee_attention
         
-        # 从kwargs中提取attention_weight（如果配置文件中传入）
         if 'attention_weight' in kwargs:
             self.attention_weight = kwargs.pop('attention_weight')
         else:
-            self.attention_weight = attention_weight  # 使用默认值或参数传入的值
+            self.attention_weight = attention_weight  
         
         # build networks
         spatial_kernel_size = A.size(0)
@@ -216,7 +178,6 @@ class Model_Amputee(nn.Module):
         self.data_bn = nn.BatchNorm1d(in_channels * A.size(1))
         kwargs0 = {k: v for k, v in kwargs.items() if k != 'dropout'}
         
-        # 使用改进的 st_gcn_amputee 块
         self.st_gcn_networks = nn.ModuleList((
             st_gcn_amputee(in_channels, 64, kernel_size, 1, residual=False, 
                           use_amputee_attention=use_amputee_attention, **kwargs0),
@@ -253,16 +214,6 @@ class Model_Amputee(nn.Module):
         self.fcn = nn.Conv2d(256, num_class, kernel_size=1)
     
     def forward(self, x, amputee_type='none'):
-        """
-        Args:
-            x: (N, C, T, V, M) 输入骨架数据
-            amputee_type: str, list, or tensor, 截肢类型
-                - 'none': 无截肢
-                - 'right_leg': 右腿截肢
-                - 'left_leg': 左腿截肢
-                - 'both_legs': 双腿截肢
-                或 list/tuple of length N，每个样本一个类型
-        """
         # data normalization
         N, C, T, V, M = x.size()
         x = x.permute(0, 4, 3, 1, 2).contiguous()
@@ -272,11 +223,8 @@ class Model_Amputee(nn.Module):
         x = x.permute(0, 1, 3, 4, 2).contiguous()
         x = x.view(N * M, C, T, V)
         
-        # 处理 amputee_type：扩展到 (N*M,) 维度
         if isinstance(amputee_type, (list, tuple)):
-            # 列表：每个样本一个类型，扩展到 (N*M,)
             if len(amputee_type) == N:
-                # 扩展到每个person
                 amputee_type_expanded = []
                 for amp_type in amputee_type:
                     amputee_type_expanded.extend([amp_type] * M)
@@ -284,7 +232,6 @@ class Model_Amputee(nn.Module):
             else:
                 current_type = amputee_type[0] if len(amputee_type) > 0 else 'none'
         elif isinstance(amputee_type, torch.Tensor):
-            # Tensor暂不支持，使用none
             current_type = 'none'
         elif isinstance(amputee_type, str):
             current_type = amputee_type
@@ -306,7 +253,6 @@ class Model_Amputee(nn.Module):
         return x
     
     def extract_feature(self, x, amputee_type='none'):
-        """提取特征（用于可视化或迁移学习）"""
         N, C, T, V, M = x.size()
         x = x.permute(0, 4, 3, 1, 2).contiguous()
         x = x.view(N * M, V * C, T)
