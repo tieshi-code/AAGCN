@@ -22,15 +22,15 @@ class Graph():
     def __init__(self,
                  layout='openpose',
                  strategy='uniform',
-                 max_hop=1,           #最大跳跃距离
-                 dilation=1):     #膨胀系数
+                 max_hop=1,          
+                 dilation=1):   
         self.max_hop = max_hop
         self.dilation = dilation
 
-        self.get_edge(layout)             #获取边信息
+        self.get_edge(layout)           
         self.hop_dis = get_hop_distance(
-            self.num_node, self.edge, max_hop=max_hop)       #计算距离
-        self.get_adjacency(strategy)            #构建邻接矩阵
+            self.num_node, self.edge, max_hop=max_hop)      
+        self.get_adjacency(strategy)            
 
     def __str__(self):
         return self.A
@@ -38,30 +38,29 @@ class Graph():
     def get_edge(self, layout):
         if layout == 'openpose':
             self.num_node = 18
-            self_link = [(i, i) for i in range(self.num_node)]   #自连接边列表：每个节点都连接到自己  相当于I
+            self_link = [(i, i) for i in range(self.num_node)]   
             neighbor_link = [(4, 3), (3, 2), (7, 6), (6, 5), (13, 12), (12,
                                                                         11),
                              (10, 9), (9, 8), (11, 5), (8, 2), (5, 1), (2, 1),
-                             (0, 1), (15, 0), (14, 0), (17, 15), (16, 14)]    #相当于A
+                             (0, 1), (15, 0), (14, 0), (17, 15), (16, 14)]    
             self.edge = self_link + neighbor_link       #(A+I)
             self.center = 1
         elif layout == 'alphapose':
             self.num_node = 17
             self_link = [(i, i) for i in range(self.num_node)]
-            # AlphaPose 17个关键点的连接关系（根据您提供的详细列表）
             # 0:nose, 1:left_eye, 2:right_eye, 3:left_ear, 4:right_ear
             # 5:left_shoulder, 6:right_shoulder, 7:left_elbow, 8:right_elbow
             # 9:left_wrist, 10:right_wrist, 11:left_hip, 12:right_hip
             # 13:left_knee, 14:right_knee, 15:left_ankle, 16:right_ankle
-            neighbor_link = [(0, 1), (0, 2), (1, 3), (2, 4),  # 头部连接
-                             (3, 5), (4, 6),  # 耳朵到肩膀
-                             (5, 6), (5, 7), (6, 8),  # 肩膀和上臂
-                             (7, 9), (8, 10),  # 前臂
-                             (5, 11), (6, 12),  # 肩膀到髋部
-                             (11, 12), (11, 13), (12, 14),  # 躯干和大腿
-                             (13, 15), (14, 16)]  # 小腿
+            neighbor_link = [(0, 1), (0, 2), (1, 3), (2, 4), 
+                             (3, 5), (4, 6), 
+                             (5, 6), (5, 7), (6, 8),  
+                             (7, 9), (8, 10), 
+                             (5, 11), (6, 12),  
+                             (11, 12), (11, 13), (12, 14), 
+                             (13, 15), (14, 16)] 
             self.edge = self_link + neighbor_link
-            self.center = 11  # 使用左髋作为中心点（更稳定）
+            self.center = 11 
         elif layout == 'ntu-rgb+d':
             self.num_node = 25
             self_link = [(i, i) for i in range(self.num_node)]
@@ -70,7 +69,7 @@ class Graph():
                               (11, 10), (12, 11), (13, 1), (14, 13), (15, 14),
                               (16, 15), (17, 1), (18, 17), (19, 18), (20, 19),
                               (22, 23), (23, 8), (24, 25), (25, 12)]
-            neighbor_link = [(i - 1, j - 1) for (i, j) in neighbor_1base]   #NTU-RGBD数据集使用1基索引（从1开始），但Python使用0基索引（从0开始
+            neighbor_link = [(i - 1, j - 1) for (i, j) in neighbor_1base]  
             self.edge = self_link + neighbor_link
             self.center = 21 - 1
         elif layout == 'ntu_edge':
@@ -94,7 +93,7 @@ class Graph():
         adjacency = np.zeros((self.num_node, self.num_node))
         for hop in valid_hop:
             adjacency[self.hop_dis == hop] = 1
-        normalize_adjacency = normalize_digraph(adjacency)     #距离信息构建和归一化邻接矩阵
+        normalize_adjacency = normalize_digraph(adjacency)   
 
         if strategy == 'uniform':
             A = np.zeros((1, self.num_node, self.num_node))
