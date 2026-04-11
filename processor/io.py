@@ -43,10 +43,8 @@ class IO():
             for k in default_arg.keys():
                 if k not in key:
                     print('Unknown Arguments (skipping): {}'.format(k))
-                    # 移除未定义的参数，而不是报错
                     continue
-                    # 或者我们可以简单地跳过这个检查
-                    # pass
+
 
             parser.set_defaults(**default_arg)
 
