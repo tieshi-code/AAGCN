@@ -11,7 +11,7 @@ import json
 import pickle
 import os
 from pathlib import Path
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from collections import Counter
 
 
@@ -245,11 +245,36 @@ def create_last_dataset_with_amputee():
     print(f"完整数据集已保存到: {output_dir}")
 
     # 6. 生成五折交叉验证
-    print("\n生成五折交叉验证...")
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    print("\n按 LK + Data point 分组并进行五折分层...")
     indices = np.arange(len(all_labels))
+    sample_groups = np.asarray([
+        "_".join(str(name).split("_")[:2]) for name in sample_names
+    ])
+    group_labels = {}
+    for group, label in zip(sample_groups, all_labels):
+        label = int(label)
+        if group in group_labels and group_labels[group] != label:
+            raise ValueError(f"同一 LK + Data point 出现多个标签: {group}")
+        group_labels[group] = label
 
-    for fold_idx, (train_indices, val_indices) in enumerate(skf.split(indices, all_labels)):
+    splitter = StratifiedGroupKFold(
+        n_splits=5, shuffle=True, random_state=2
+    )
+    validation_indices_seen = []
+
+    for fold_idx, (train_indices, val_indices) in enumerate(
+        splitter.split(indices, all_labels, sample_groups)
+    ):
+        train_groups = set(sample_groups[train_indices])
+        val_groups = set(sample_groups[val_indices])
+        overlap = train_groups & val_groups
+        if overlap:
+            raise ValueError(
+                f"Fold {fold_idx + 1} 的训练/验证集存在 LK + Data point 重叠: "
+                f"{sorted(overlap)[:5]}"
+            )
+        validation_indices_seen.extend(val_indices.tolist())
+
         fold_dir = os.path.join(output_dir, f'fold_{fold_idx + 1}')
         os.makedirs(fold_dir, exist_ok=True)
 
@@ -278,8 +303,12 @@ def create_last_dataset_with_amputee():
         train_dist = Counter(train_labels)
         val_dist = Counter(val_labels)
         print(f"Fold {fold_idx + 1}: 训练 {len(train_labels)}, 验证 {len(val_labels)}")
+        print(f"  分组数: 训练 {len(train_groups)}, 验证 {len(val_groups)}")
         print(f"  训练分布: {dict(sorted(train_dist.items()))}")
         print(f"  验证分布: {dict(sorted(val_dist.items()))}")
+
+    if sorted(validation_indices_seen) != list(range(len(all_labels))):
+        raise ValueError("五折验证集没有恰好覆盖全部样本一次")
 
     print("\n✓ 数据集生成完成!")
 
