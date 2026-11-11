@@ -160,7 +160,7 @@ def create_last_dataset():
     print("\nProcessing video data...")
     data_list = []
     label_list = []
-    patient_ids = []
+    sample_groups = []
     sample_names = []
     processed_count = 0
 
@@ -186,7 +186,7 @@ def create_last_dataset():
         if data is not None:
             data_list.append(data)
             label_list.append(processed_label)
-            patient_ids.append(lk)
+            sample_groups.append(f"{lk}_{data_point}")
             sample_names.append(f"{lk}_{data_point}_{processed_count}")
 
             processed_count += 1
@@ -213,20 +213,22 @@ def create_last_dataset():
 
     print(f"Full dataset saved to: {output_dir}")
 
-    print("\nGenerating patient-stratified 5-fold cross-validation...")
-    skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+    print("\nGenerating LK + Data point grouped 5-fold cross-validation...")
+    skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=2)
     indices = np.arange(len(all_labels))
+    validation_indices_seen = []
 
     for fold_idx, (train_indices, val_indices) in enumerate(
-            skf.split(indices, all_labels, groups=patient_ids)):
-        train_patients = {patient_ids[i] for i in train_indices}
-        val_patients = {patient_ids[i] for i in val_indices}
-        if train_patients & val_patients:
-            raise RuntimeError(f"Patient overlap found in fold {fold_idx + 1}")
+            skf.split(indices, all_labels, groups=sample_groups)):
+        train_groups = {sample_groups[i] for i in train_indices}
+        val_groups = {sample_groups[i] for i in val_indices}
+        if train_groups & val_groups:
+            raise RuntimeError(f"LK + Data point overlap found in fold {fold_idx + 1}")
+        validation_indices_seen.extend(val_indices.tolist())
 
         print(f"\nFold {fold_idx + 1}:")
-        print(f"  Train patients: {len(train_patients)}")
-        print(f"  Validation patients: {len(val_patients)}")
+        print(f"  Train LK + Data point groups: {len(train_groups)}")
+        print(f"  Validation LK + Data point groups: {len(val_groups)}")
 
         fold_dir = os.path.join(output_dir, f'fold_{fold_idx + 1}')
         os.makedirs(fold_dir, exist_ok=True)
@@ -256,6 +258,9 @@ def create_last_dataset():
             pickle.dump((val_labels_fold.tolist(), val_names), f)
 
         print(f"  Saved to: {fold_dir}")
+
+    if sorted(validation_indices_seen) != list(range(len(all_labels))):
+        raise RuntimeError("Validation folds must cover every sample exactly once")
 
     print("\n✓ 5-fold cross-validation dataset generated successfully!")
     print(f"Output directory: {output_dir}")
