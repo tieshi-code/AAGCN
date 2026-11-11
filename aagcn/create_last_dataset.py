@@ -10,7 +10,7 @@ import json
 import pickle
 import os
 from pathlib import Path
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from collections import defaultdict
 
 
@@ -195,6 +195,7 @@ def create_last_dataset():
     print("\n处理视频数据...")
     data_list = []
     label_list = []
+    sample_groups = []
     sample_names = []
     processed_count = 0
 
@@ -225,6 +226,7 @@ def create_last_dataset():
         if data is not None:
             data_list.append(data)
             label_list.append(processed_label)
+            sample_groups.append(f"{lk}_{data_point}")
             sample_names.append(f"{lk}_{data_point}_{processed_count}")
 
             processed_count += 1
@@ -254,13 +256,22 @@ def create_last_dataset():
 
     print(f"完整数据集已保存到: {output_dir}")
 
-    # 6. 生成五折交叉验证（分层抽样，确保每折标签分布均匀）
-    print("\n生成五折交叉验证（分层抽样）...")
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # 6. 按 LK + Data point 分组进行五折分层
+    print("\n生成 LK + Data point 分组的五折交叉验证...")
+    skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=2)
     indices = np.arange(len(all_labels))
+    validation_indices_seen = []
 
-    for fold_idx, (train_indices, val_indices) in enumerate(skf.split(indices, all_labels)):
+    for fold_idx, (train_indices, val_indices) in enumerate(
+            skf.split(indices, all_labels, groups=sample_groups)):
+        train_groups = {sample_groups[i] for i in train_indices}
+        val_groups = {sample_groups[i] for i in val_indices}
+        overlap = train_groups & val_groups
+        if overlap:
+            raise ValueError(f"Fold {fold_idx + 1} 存在 LK + Data point 重叠: {sorted(overlap)[:5]}")
+        validation_indices_seen.extend(val_indices.tolist())
         print(f"\nFold {fold_idx + 1}:")
+        print(f"  分组数: 训练 {len(train_groups)}, 验证 {len(val_groups)}")
 
         # 创建fold目录
         fold_dir = os.path.join(output_dir, f'fold_{fold_idx + 1}')
@@ -295,6 +306,9 @@ def create_last_dataset():
             pickle.dump((val_labels_fold.tolist(), val_names), f)
 
         print(f"  保存到: {fold_dir}")
+
+    if sorted(validation_indices_seen) != list(range(len(all_labels))):
+        raise ValueError("五折验证集没有恰好覆盖全部样本一次")
 
     print("\n✓ 五折交叉验证数据生成完成!")
     print(f"输出目录: {output_dir}")
